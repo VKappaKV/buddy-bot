@@ -6,17 +6,26 @@ Questo README documenta le decisioni di progetto e le prove del primo prototipo.
 
 ## Decisione sullo stack
 
-Decisione del 20 novembre 2026, aggiornata il 23 novembre 2026 per includere entrambi i canali di contatto. Cloudflare ospita l’applicazione e i dati operativi. Obsidian Sync collega il vault ai dispositivi.
+Aggiornamento del 23 novembre 2026. Buddy Bot adotta Ratstack come riferimento per l’applicazione TypeScript e l’infrastruttura su Cloudflare. Cloudflare ospita l’applicazione e i dati operativi. Obsidian Sync collega il vault ai dispositivi.
 
 | Componente | Scelta | Motivazione |
 | --- | --- | --- |
-| Canali del bot | TypeScript su Cloudflare Workers, Telegram e WhatsApp Business Cloud | Entrambi i canali scrivono nello stesso diario in D1. Vercel Chat SDK ha superato la prova locale dal telefono su Telegram. La prova WhatsApp resta in sospeso. |
+| Applicazione | TypeScript strict e Effect 4 su Cloudflare Workers | Le regole del diario e la validazione con Effect Schema sono condivise fra i canali. Le operazioni dichiarano gli errori previsti e usano servizi sostituibili per archivio, file e invio. |
+| Infrastruttura | Alchemy v2 con `@alchemy.run/cloudflare` | Dichiara risorse e collegamenti Cloudflare in TypeScript. Si parte da Worker, D1 e R2. Queues, Cron Triggers e il Container con Durable Object entrano quando i rispettivi flussi li richiedono. |
+| Canali del bot | Vercel Chat SDK per Telegram e WhatsApp Business Cloud | Gli adapter traducono i messaggi nella stessa operazione di acquisizione. Chat SDK ha superato la prova locale dal telefono su Telegram. La prova WhatsApp resta in sospeso. |
+| Configurazione e qualità | Varlock, pnpm, Oxlint, Oxfmt, Vitest e `@effect/vitest` | Lo schema pubblico elenca le variabili e la CI verifica tipi, lint, formato e comportamento. Lefthook esegue gli stessi controlli prima del commit. |
 | Collegamenti | GitHub App e Linear OAuth | GitHub accede ai repository selezionati. Linear usa lo scope `read`. |
 | Stato del diario | Cloudflare D1 | Conserva fonti, obiettivi, revisioni e lavori da eseguire. L’acquisizione e la registrazione del lavoro avvengono nella stessa transazione. |
 | Lavori in background | Cloudflare Queues e Cron Triggers | Gestiscono reminder, trascrizioni, import e report. Ogni lavoro ha un identificativo stabile per gestire le riconsegne. |
 | File e ripristino | Cloudflare R2 privato e D1 Time Travel | R2 conserva audio temporaneo, versioni delle note e backup cifrati. Time Travel consente il ripristino del database a un momento precedente. |
 | Vault | Cloudflare Containers, un Durable Object e Obsidian Headless Sync | Una sola istanza Linux sincronizza il vault in modo continuo. Il Durable Object gestisce l’avvio e il riavvio dell’istanza. |
 | AI | Cloudflare Workers AI | Llama 3.3 70B per report e proposte strutturate e Whisper Large v3 Turbo per i vocali sono i primi candidati da provare su un corpus italiano. |
+
+## Adozione di Ratstack
+
+- **Prima prova.** Riprodurre in locale con Alchemy il Worker con D1 e R2. Portare ricezione, salvataggio e conferma in un’operazione Effect condivisa. Riservare le conferme ai messaggi già salvati e mantenere la deduplicazione in D1. Riusare gli scenari del prototipo per errori, riconsegne, vocali e riavvio. [Guida Ratstack](https://ratstack.sh/llms.txt) · [Effect 4](https://effect.website/blog/effect-v4-rc-september-recap) · [Alchemy in locale](https://alchemy.run/environments/local-development/)
+- **Configurazione.** Validare le variabili con Varlock e `.env.schema`. I valori di test restano in file locali esclusi da Git. Fissare le versioni compatibili nel lockfile e verificare le modifiche con `alchemy plan` prima di applicarle. [Varlock](https://varlock.dev/) · [Piano Alchemy](https://alchemy.run/infrastructure-as-code/resource-lifecycle/)
+- **Componenti da introdurre quando servono.** Foldkit per le schermate web di collegamento e impostazioni. Valutare XState per flussi con stati, annullamento o ripresa quando emergerà il primo caso concreto. [Componenti opzionali di Ratstack](https://ratstack.sh/README.md#keep-or-cut)
 
 ## Canali di contatto
 
