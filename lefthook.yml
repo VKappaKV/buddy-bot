@@ -1,0 +1,6 @@
+pre-commit:
+  jobs:
+    - name: Check
+      run: pnpm check
+    - name: Test
+      run: pnpm test
