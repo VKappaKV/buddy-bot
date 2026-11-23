@@ -6,7 +6,7 @@
   "scripts": {
     "check": "pnpm env:check && pnpm typecheck && pnpm lint && pnpm format:check",
     "env:check": "varlock load --path .env.schema",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --project tsconfig.test.json",
     "lint": "oxlint --deny-warnings alchemy.run.ts src scripts test",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
@@ -27,6 +27,7 @@
     "@cloudflare/workers-types": "5.20261120.1",
     "@effect/platform-node": "4.1.4",
     "@effect/vitest": "4.1.4",
+    "@types/node": "24.19.2",
     "alchemy": "2.0.0-beta.87",
     "esbuild": "0.28.2",
     "lefthook": "2.2.2",

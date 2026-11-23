@@ -4,7 +4,7 @@ import { capture, cloudflareDiary } from '../src/capture.ts';
 
 it.effect('rifiuta un messaggio senza ID prima di accedere al diario o confermare', () =>
   Effect.gen(function* () {
-    const unexpected = () => {
+    const unexpected = (): never => {
       throw new Error('Il messaggio non valido non deve accedere al diario né inviare conferme');
     };
     const diary = cloudflareDiary({ prepare: unexpected }, { put: unexpected });

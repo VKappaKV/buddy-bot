@@ -46,7 +46,7 @@ class DiaryStorage extends Context.Service<
 const storage = <A>(use: () => Promise<A>) =>
   Effect.tryPromise({ try: use, catch: (cause) => new StorageFailure({ cause }) });
 
-export function cloudflareDiary(db: D1Database, files: R2Bucket) {
+export function cloudflareDiary(db: Pick<D1Database, 'prepare'>, files: Pick<R2Bucket, 'put'>) {
   return Layer.succeed(DiaryStorage, {
     owner: (channel) =>
       storage(() =>

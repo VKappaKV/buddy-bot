@@ -5,9 +5,9 @@ import { isBuiltin } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, URL, URLSearchParams } from 'node:url';
 import { build } from 'esbuild';
-import { Miniflare } from 'miniflare';
+import { Miniflare, type MiniflareOptions, type Request } from 'miniflare';
 import { afterAll, beforeAll, describe, test } from 'vitest';
 
 const telegramUser = {
@@ -26,7 +26,21 @@ const whatsappPair = 'buddy-local-whatsapp-pair';
 const audio = Buffer.from('OggS local test fixture');
 const schema = await readFile(new URL('../migrations/0001_diary.sql', import.meta.url), 'utf8');
 
-function telegram(id, text, owner = telegramUser) {
+type Channel = 'telegram' | 'whatsapp';
+type DiaryRow = {
+  channel: Channel;
+  message_id: string;
+  owner: string;
+  text: string;
+  audio_key: string | null;
+  audio_bytes: number | null;
+  receipt: 'pending' | 'sending' | 'sent' | 'unknown';
+};
+
+type TelegramReply = { chat_id: string | number; text: string; reply_parameters?: { message_id: number } };
+type WhatsAppReply = { to: string; text: { body: string }; context?: { message_id: string } };
+
+function telegram(id: number, text: string | null, owner = telegramUser) {
   return {
     update_id: id + 1000,
     message: {
@@ -49,7 +63,7 @@ function telegram(id, text, owner = telegramUser) {
   };
 }
 
-function whatsappMessage(id, text, owner) {
+function whatsappMessage(id: number, text: string | null, owner: string) {
   return {
     id: 'wamid.' + id,
     timestamp: '1795431600',
@@ -60,11 +74,11 @@ function whatsappMessage(id, text, owner) {
   };
 }
 
-function whatsapp(id, text, owner = whatsappUser) {
+function whatsapp(id: number, text: string | null, owner = whatsappUser) {
   return whatsappBatch([whatsappMessage(id, text, owner)], owner);
 }
 
-function whatsappBatch(messages, owner = whatsappUser) {
+function whatsappBatch(messages: ReturnType<typeof whatsappMessage>[], owner = whatsappUser) {
   return {
     object: 'whatsapp_business_account',
     entry: [
@@ -86,9 +100,9 @@ function whatsappBatch(messages, owner = whatsappUser) {
   };
 }
 
-function deliver(runtime, channel, event, signed = true) {
+function deliver(runtime: Miniflare, channel: Channel, event: object, signed = true) {
   const body = JSON.stringify(event);
-  const authentication =
+  const authentication: Record<string, string> =
     channel === 'telegram'
       ? { 'x-telegram-bot-api-secret-token': signed ? telegramSecret : 'wrong' }
       : {
@@ -106,14 +120,14 @@ function deliver(runtime, channel, event, signed = true) {
 }
 
 describe('Chat SDK 4.45.0 su Cloudflare Workers locale', { concurrent: false, shuffle: false }, () => {
-  const confirmations = [];
-  const fakeErrors = [];
+  const confirmations: { channel: Channel; id: string }[] = [];
+  const fakeErrors: unknown[] = [];
   let failMedia = false;
   let failConfirmation = false;
-  let storage;
-  let options;
-  let runtime;
-  let database;
+  let storage: Awaited<ReturnType<typeof mkdtempDisposable>>;
+  let options: MiniflareOptions;
+  let runtime: Miniflare;
+  let database: Awaited<ReturnType<Miniflare['getD1Database']>>;
 
   beforeAll(async () => {
     storage = await mkdtempDisposable(join(tmpdir(), 'buddy-chat-'));
@@ -163,7 +177,7 @@ describe('Chat SDK 4.45.0 su Cloudflare Workers locale', { concurrent: false, sh
         WHATSAPP_APP_SECRET: whatsappSecret,
         WHATSAPP_VERIFY_TOKEN: whatsappVerify,
       },
-      async outboundService(request, runtime) {
+      async outboundService(request: Request, runtime: Miniflare) {
         const { hostname, pathname } = new URL(request.url);
         try {
           if (hostname === 'telegram.test') {
@@ -182,17 +196,19 @@ describe('Chat SDK 4.45.0 su Cloudflare Workers locale', { concurrent: false, sh
                 : new Response(audio, { headers: { 'content-type': 'audio/ogg' } });
             }
             if (pathname.endsWith('/sendMessage')) {
-              const input = await request.json();
+              const input = (await request.json()) as TelegramReply;
               assert.equal(String(input.chat_id), String(telegramUser.id));
-              if (input.text === 'Canale di test collegato.')
+              if (input.text === 'Canale di test collegato.') {
                 await verifyPairing(runtime, 'telegram', String(telegramUser.id));
-              else
+              } else {
+                assert.ok(input.reply_parameters, 'Telegram must reply to the original message');
                 await verifyAtConfirmation(
                   runtime,
                   'telegram',
                   telegramUser.id + ':' + input.reply_parameters.message_id,
                   input.text,
                 );
+              }
               if (failConfirmation)
                 return Response.json({ ok: false, description: 'Simulated outage' }, { status: 502 });
               return Response.json({
@@ -217,11 +233,14 @@ describe('Chat SDK 4.45.0 su Cloudflare Workers locale', { concurrent: false, sh
                 : new Response(audio, { headers: { 'content-type': 'audio/ogg' } });
             }
             if (pathname.endsWith('/9001/messages')) {
-              const input = await request.json();
+              const input = (await request.json()) as WhatsAppReply;
               assert.equal(input.to, whatsappUser);
-              if (input.text.body === 'Canale di test collegato.')
+              if (input.text.body === 'Canale di test collegato.') {
                 await verifyPairing(runtime, 'whatsapp', whatsappUser);
-              else await verifyAtConfirmation(runtime, 'whatsapp', input.context.message_id, input.text.body);
+              } else {
+                assert.ok(input.context, 'WhatsApp must reply to the original message');
+                await verifyAtConfirmation(runtime, 'whatsapp', input.context.message_id, input.text.body);
+              }
               return Response.json({
                 messaging_product: 'whatsapp',
                 messages: [{ id: 'wamid.reply-' + confirmations.length }],
@@ -253,22 +272,23 @@ describe('Chat SDK 4.45.0 su Cloudflare Workers locale', { concurrent: false, sh
     }
   });
 
-  async function verifyPairing(runtime, channel, user) {
+  async function verifyPairing(runtime: Miniflare, channel: Channel, user: string) {
     const database = await runtime.getD1Database('DB');
     const owner = await database
       .prepare('SELECT user_id FROM test_owners WHERE channel=?')
       .bind(channel)
-      .first('user_id');
+      .first<string>('user_id');
     assert.equal(owner, user);
   }
 
-  async function verifyAtConfirmation(runtime, channel, id, text) {
+  async function verifyAtConfirmation(runtime: Miniflare, channel: Channel, id: string, text: string) {
     const database = await runtime.getD1Database('DB');
     const row = await database
       .prepare('SELECT * FROM diary WHERE channel=? AND message_id=?')
       .bind(channel, id)
-      .first();
-    assert.equal(row?.receipt, 'sending', 'D1 must already contain the message');
+      .first<DiaryRow>();
+    assert.ok(row, 'D1 must already contain the message');
+    assert.equal(row.receipt, 'sending');
     assert.equal(row.owner, 'owner');
     assert.equal(text, row.audio_key ? 'Vocale salvato.' : 'Annotazione salvata.');
     if (row.audio_key) {
@@ -281,7 +301,7 @@ describe('Chat SDK 4.45.0 su Cloudflare Workers locale', { concurrent: false, sh
   }
 
   const entries = async () =>
-    (await database.prepare('SELECT * FROM diary ORDER BY channel,message_id').all()).results;
+    (await database.prepare('SELECT * FROM diary ORDER BY channel,message_id').all<DiaryRow>()).results;
 
   test('verifica webhook e limita la raccolta al proprietario', async () => {
     const challenge = await runtime.dispatchFetch(
@@ -374,7 +394,7 @@ describe('Chat SDK 4.45.0 su Cloudflare Workers locale', { concurrent: false, sh
     const requests = [
       ['telegram', telegram(30, 'guasto D1')],
       ['whatsapp', whatsapp(30, 'guasto D1')],
-    ];
+    ] as const;
     try {
       for (const [channel, event] of requests)
         assert.equal((await deliver(runtime, channel, event)).status, 503);
@@ -393,7 +413,7 @@ describe('Chat SDK 4.45.0 su Cloudflare Workers locale', { concurrent: false, sh
     const requests = [
       ['telegram', telegram(40, null)],
       ['whatsapp', whatsapp(40, null)],
-    ];
+    ] as const;
     failMedia = true;
     try {
       for (const [channel, event] of requests)
